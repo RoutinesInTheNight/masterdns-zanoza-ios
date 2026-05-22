@@ -5,8 +5,6 @@ iOS client for [MasterDnsVPN](https://github.com/masterking32/MasterDnsVPN) — 
 It wraps the upstream MasterDnsVPN Go client into an iOS app, exposes its local SOCKS5 proxy at `127.0.0.1:41080`, and keeps the tunnel running while you switch to another app (Shadowrocket, Happ, etc.) that runs the proxy.
 The app does **not** create an iOS VPN profile, since it is unsigned.
 
-Special thanks to [plumbicon](https://github.com/plumbicon/godwit), as their UI was used as a foundation.
-
 ## Repository layout
 
 ```
@@ -73,15 +71,11 @@ Enable **Settings → Privacy & Security → Developer Mode** on the iPhone befo
 1. Launch Zanoza and tap **Import**.
 2. Enter the delegated domain from your MasterDnsVPN server (the same value as the NS record, e.g. `v.example.com`).
 3. Enter the shared encryption key (must match the server-side key).
-4. Tap **Import**, then the connect (power) button.
-5. The SOCKS5 proxy comes up at `127.0.0.1:41080`. Open Shadowrocket / Happ / Stash and add a SOCKS5 proxy pointing at that address.
-6. Zanoza keeps the listener alive while you switch to the other app via a silent-audio background mode. Killing Zanoza from the app switcher stops the tunnel.
-
-## How the background trick works
-
-iOS suspends regular apps shortly after they leave the foreground. Zanoza declares `UIBackgroundModes = ["audio"]` and plays a 1-second silent PCM buffer on loop through `AVAudioEngine`. While audio is rendering, iOS keeps the process alive — and the SOCKS listener with it. The audio session uses `.mixWithOthers` so it does not interrupt your music. See `apple/Sources/ZanozaKit/Services/BackgroundRuntimeKeeper.swift`.
+4. Tap **Import**, then the connect (power) button. **Encryption Type** must match the server's server_config.toml **DATA_ENCRYPTION_METHOD** (XOR by default in both)
+5. The SOCKS5 proxy comes up at `127.0.0.1:41080`. Open Shadowrocket / Happ / etc. and add a SOCKS5 proxy pointing at that address.
+6. Zanoza keeps the listener alive while you switch to other apps. Killing Zanoza from the app switcher stops the tunnel.
 
 ## Credits
 
 - Upstream protocol and Go client: [MasterDnsVPN by MasterkinG32](https://github.com/masterking32/MasterDnsVPN)
-- iOS application shell loosely follows the structure of [Godwit](https://github.com/plumbicon/godwit) (MIT)
+- iOS application shell follows the structure of [Godwit](https://github.com/plumbicon/godwit) (MIT)
