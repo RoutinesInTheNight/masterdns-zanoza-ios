@@ -12,17 +12,22 @@ import Darwin
 import Mobile
 #endif
 
-// Watches the active physical network path and pushes the BSD interface
-// name of the underlying Wi-Fi / cellular / Ethernet link into the Go
-// client via MobileSetBoundInterface. NetworkExtension VPN interfaces
-// (utun*, ipsec*, tap*) are excluded so we never try to bind our outbound
-// DNS sockets to another app's tunnel.
+// Watches the active physical network path and pushes both the BSD
+// interface name AND the interface's own IPv4 address into the Go client
+// (via MobileSetBoundInterface / MobileSetBoundAddress). The Go side then
+// uses BOTH setsockopt(IP_BOUND_IF) and bind() to the local IP, which is
+// the strongest combination for keeping outbound DNS traffic on the
+// physical link when a third-party NetworkExtension (Happ / Shadowrocket)
+// is active on the same device.
 @MainActor
 public final class PhysicalInterfaceMonitor: ObservableObject {
     public struct Snapshot: Equatable {
         public let name: String          // BSD name, e.g. "en0"
         public let type: InterfaceType
-        public static let none = Snapshot(name: "", type: .none)
+        public let ipv4: String          // e.g. "192.168.1.42" or ""
+        public let ipv6: String          // first global v6, or "" (link-local skipped)
+        public let foreignVPNActive: Bool // another app's NE is up alongside us
+        public static let none = Snapshot(name: "", type: .none, ipv4: "", ipv6: "", foreignVPNActive: false)
     }
 
     public enum InterfaceType: String, Equatable {
@@ -36,6 +41,9 @@ public final class PhysicalInterfaceMonitor: ObservableObject {
     @Published public private(set) var snapshot: Snapshot = .none
 
     public var currentName: String { snapshot.name }
+    public var currentIPv4: String { snapshot.ipv4 }
+    public var currentIPv6: String { snapshot.ipv6 }
+    public var foreignVPNActive: Bool { snapshot.foreignVPNActive }
 
     #if canImport(Network)
     private let pathMonitor = NWPathMonitor()
@@ -60,9 +68,7 @@ public final class PhysicalInterfaceMonitor: ObservableObject {
         pathMonitor.start(queue: queue)
         #endif
 
-        // Apply an initial best-effort snapshot before the path-update
-        // callback fires (it can take a few hundred ms on cold launch).
-        apply(PhysicalInterfaceMonitor.resolveFromGetifaddrs(preferring: nil))
+        apply(PhysicalInterfaceMonitor.resolveFromGetifaddrs(preferring: nil, foreignVPN: false))
     }
 
     public func stop() {
@@ -76,14 +82,15 @@ public final class PhysicalInterfaceMonitor: ObservableObject {
     private func apply(_ next: Snapshot) {
         if next == snapshot { return }
         snapshot = next
-        push(name: next.name)
+        push(next)
     }
 
-    private func push(name: String) {
+    private func push(_ snap: Snapshot) {
         #if canImport(Mobile)
-        MobileSetBoundInterface(name)
+        MobileSetBoundInterface(snap.name)
+        MobileSetBoundAddress(snap.ipv4, snap.ipv6)
         #else
-        _ = name
+        _ = snap
         #endif
     }
 
@@ -91,17 +98,20 @@ public final class PhysicalInterfaceMonitor: ObservableObject {
 
     #if canImport(Network)
     nonisolated static func resolveInterface(path: NWPath) -> Snapshot {
+        // Detect a foreign VPN: NWPath reports interface type .other when
+        // an NEPacketTunnelProvider is up. We only flag it when it appears
+        // ALONGSIDE a real physical link, because Zanoza itself never
+        // installs an NE.
+        let foreignVPN = path.usesInterfaceType(.other)
+
         guard path.status == .satisfied else {
-            return resolveFromGetifaddrs(preferring: nil)
+            return resolveFromGetifaddrs(preferring: nil, foreignVPN: foreignVPN)
         }
         var preferredType: InterfaceType?
         if path.usesInterfaceType(.wiredEthernet) { preferredType = .wired }
         else if path.usesInterfaceType(.wifi) { preferredType = .wifi }
         else if path.usesInterfaceType(.cellular) { preferredType = .cellular }
 
-        // NWInterface.name is the BSD name on iOS / macOS (Apple has
-        // confirmed this in WWDC sessions, though it's not in the headers
-        // contract). Fall back to getifaddrs if it ever isn't.
         if let preferredType {
             let matching = path.availableInterfaces.first { iface in
                 switch (preferredType, iface.type) {
@@ -112,16 +122,15 @@ public final class PhysicalInterfaceMonitor: ObservableObject {
                 }
             }
             if let name = matching?.name, !name.isEmpty {
-                return Snapshot(name: name, type: preferredType)
+                let (v4, v6) = addressesOfInterface(named: name)
+                return Snapshot(name: name, type: preferredType, ipv4: v4, ipv6: v6, foreignVPNActive: foreignVPN)
             }
         }
-        return resolveFromGetifaddrs(preferring: preferredType)
+        return resolveFromGetifaddrs(preferring: preferredType, foreignVPN: foreignVPN)
     }
     #endif
 
-    // Walks the BSD interface table directly. Filters to UP+RUNNING,
-    // non-loopback, non-VPN, prefers en* then pdp_ip* then anything else.
-    nonisolated static func resolveFromGetifaddrs(preferring preferred: InterfaceType?) -> Snapshot {
+    nonisolated static func resolveFromGetifaddrs(preferring preferred: InterfaceType?, foreignVPN: Bool) -> Snapshot {
         #if canImport(Darwin)
         var head: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&head) == 0, let head else { return .none }
@@ -154,19 +163,69 @@ public final class PhysicalInterfaceMonitor: ObservableObject {
                 type = .other
                 score = 10
             }
+            // Only keep interfaces that actually have an IPv4 or IPv6 address.
+            let (v4, v6) = addressesOfInterface(named: name)
+            guard !v4.isEmpty || !v6.isEmpty else { continue }
             seen.append((name, type, score))
         }
 
-        if let preferred {
-            if let hit = seen.first(where: { $0.type == preferred }) {
-                return Snapshot(name: hit.name, type: hit.type)
-            }
+        if let preferred,
+           let hit = seen.first(where: { $0.type == preferred }) {
+            let (v4, v6) = addressesOfInterface(named: hit.name)
+            return Snapshot(name: hit.name, type: hit.type, ipv4: v4, ipv6: v6, foreignVPNActive: foreignVPN)
         }
         if let best = seen.max(by: { $0.score < $1.score }) {
-            return Snapshot(name: best.name, type: best.type)
+            let (v4, v6) = addressesOfInterface(named: best.name)
+            return Snapshot(name: best.name, type: best.type, ipv4: v4, ipv6: v6, foreignVPNActive: foreignVPN)
         }
         #endif
-        return .none
+        return Snapshot(name: "", type: .none, ipv4: "", ipv6: "", foreignVPNActive: foreignVPN)
+    }
+
+    nonisolated static func addressesOfInterface(named target: String) -> (ipv4: String, ipv6: String) {
+        #if canImport(Darwin)
+        var head: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&head) == 0, let head else { return ("", "") }
+        defer { freeifaddrs(head) }
+
+        var ipv4 = ""
+        var ipv6 = ""
+        var node: UnsafeMutablePointer<ifaddrs>? = head
+        while let ptr = node {
+            defer { node = ptr.pointee.ifa_next }
+            let name = String(cString: ptr.pointee.ifa_name)
+            guard name == target, let saPtr = ptr.pointee.ifa_addr else { continue }
+            let family = saPtr.pointee.sa_family
+
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let saLen: socklen_t
+            switch Int32(family) {
+            case AF_INET:
+                saLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+            case AF_INET6:
+                saLen = socklen_t(MemoryLayout<sockaddr_in6>.size)
+            default:
+                continue
+            }
+            let rc = getnameinfo(saPtr, saLen, &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST)
+            guard rc == 0 else { continue }
+            let address = String(cString: host)
+            switch Int32(family) {
+            case AF_INET where ipv4.isEmpty:
+                ipv4 = address
+            case AF_INET6 where ipv6.isEmpty:
+                // Skip link-local fe80::/10 since it's not routable.
+                if !address.lowercased().hasPrefix("fe80") {
+                    ipv6 = address
+                }
+            default:
+                break
+            }
+        }
+        return (ipv4, ipv6)
+        #else
+        return ("", "")
+        #endif
     }
 
     nonisolated private static func isVPNName(_ name: String) -> Bool {

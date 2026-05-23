@@ -170,3 +170,18 @@ func TestSetBoundInterfaceRoundtrips(t *testing.T) {
 	}
 	SetBoundInterface("")
 }
+
+func TestSetBoundAddressRoundtrips(t *testing.T) {
+	SetBoundAddress("", "")
+	SetBoundAddress("192.0.2.5", "2001:db8::5")
+	if got := BoundIPv4(); got != "192.0.2.5" {
+		t.Errorf("BoundIPv4 = %q, want 192.0.2.5", got)
+	}
+	if got := BoundIPv6(); got != "2001:db8::5" {
+		t.Errorf("BoundIPv6 = %q, want 2001:db8::5", got)
+	}
+	SetBoundAddress("", "")
+	if got := BoundIPv4(); got != "" {
+		t.Errorf("BoundIPv4 after reset = %q", got)
+	}
+}

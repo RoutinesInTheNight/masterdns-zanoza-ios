@@ -96,7 +96,11 @@ func TestDialUDPWithLoopbackBindingSucceedsOnDarwin(t *testing.T) {
 		t.Skip("lo0 not present; skipping interface-binding test")
 	}
 	SetInterface("lo0")
-	defer SetInterface("")
+	SetAddress("127.0.0.1", "")
+	defer func() {
+		SetInterface("")
+		SetAddress("", "")
+	}()
 
 	echo, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
 	if err != nil {
@@ -112,5 +116,31 @@ func TestDialUDPWithLoopbackBindingSucceedsOnDarwin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DialUDP with lo0 binding: %v", err)
 	}
-	conn.Close()
+	defer conn.Close()
+	if conn.LocalAddr().(*net.UDPAddr).IP.String() != "127.0.0.1" {
+		t.Errorf("local addr = %v, want 127.0.0.1", conn.LocalAddr())
+	}
+}
+
+func TestSetAddressFiresOnChange(t *testing.T) {
+	SetAddress("", "")
+	var count int32
+	handle := OnChange(func() { atomic.AddInt32(&count, 1) })
+	defer RemoveHook(handle)
+
+	SetAddress("192.168.1.42", "")
+	SetAddress("192.168.1.42", "") // identical → no-op
+	SetAddress("192.168.1.50", "")
+	SetAddress("192.168.1.50", "fe80::1")
+
+	if got := atomic.LoadInt32(&count); got != 3 {
+		t.Errorf("OnChange fired %d times, want 3", got)
+	}
+	if CurrentIPv4() != "192.168.1.50" {
+		t.Errorf("CurrentIPv4 = %q, want 192.168.1.50", CurrentIPv4())
+	}
+	if CurrentIPv6() != "fe80::1" {
+		t.Errorf("CurrentIPv6 = %q, want fe80::1", CurrentIPv6())
+	}
+	SetAddress("", "")
 }

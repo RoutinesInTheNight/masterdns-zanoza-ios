@@ -56,6 +56,37 @@ public struct SettingsView: View {
                         .foregroundColor(.secondary)
                         .font(.callout.monospacedDigit())
                 }
+                if !physicalInterfaceMonitor.snapshot.ipv4.isEmpty {
+                    HStack {
+                        Text(AppLocalization.string("Source IPv4"))
+                        Spacer()
+                        Text(physicalInterfaceMonitor.snapshot.ipv4)
+                            .foregroundColor(.secondary)
+                            .font(.callout.monospacedDigit())
+                            .textSelection(.enabled)
+                    }
+                }
+                if !physicalInterfaceMonitor.snapshot.ipv6.isEmpty {
+                    HStack {
+                        Text(AppLocalization.string("Source IPv6"))
+                        Spacer()
+                        Text(physicalInterfaceMonitor.snapshot.ipv6)
+                            .foregroundColor(.secondary)
+                            .font(.callout.monospacedDigit())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                }
+                HStack {
+                    Text(AppLocalization.string("Third-party VPN"))
+                    Spacer()
+                    Text(physicalInterfaceMonitor.snapshot.foreignVPNActive
+                         ? AppLocalization.string("Active")
+                         : AppLocalization.string("Not detected"))
+                        .foregroundColor(physicalInterfaceMonitor.snapshot.foreignVPNActive ? .orange : .secondary)
+                        .font(.callout.weight(.medium))
+                }
             } header: {
                 Text(AppLocalization.string("Diagnostics"))
             } footer: {
@@ -86,6 +117,9 @@ public struct SettingsView: View {
         let snapshot = physicalInterfaceMonitor.snapshot
         if snapshot.name.isEmpty {
             Text(AppLocalization.string("Outbound traffic may loop through another active VPN app. Disable other VPN apps or restart Zanoza after Wi-Fi/cellular is up."))
+                .foregroundColor(.orange)
+        } else if snapshot.foreignVPNActive {
+            Text(AppLocalization.string("Another VPN app is active. Zanoza pins its outbound DNS to this interface AND its source IP to bypass it. If the tunnel still stalls, check the other app for a 'Strict / Lockdown / Include All Networks' toggle and disable it."))
                 .foregroundColor(.orange)
         } else {
             Text(AppLocalization.string("Outbound DNS queries are pinned to this physical interface, bypassing any other active VPN."))

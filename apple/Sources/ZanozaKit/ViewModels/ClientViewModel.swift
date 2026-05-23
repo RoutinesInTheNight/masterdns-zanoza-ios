@@ -171,6 +171,8 @@ public final class ClientViewModel: ObservableObject {
         }
         let settingsSnapshot = settings
         let boundInterface = physicalInterfaceMonitor.currentName
+        let boundIPv4 = physicalInterfaceMonitor.currentIPv4
+        let boundIPv6 = physicalInterfaceMonitor.currentIPv6
         status = .starting
         AppLogger.shared.append("Starting Zanoza tunnel for \(profile.domain)...")
 
@@ -188,7 +190,9 @@ public final class ClientViewModel: ObservableObject {
                             profile: profile,
                             settings: settingsSnapshot,
                             runtimeDirectory: runtimeDir,
-                            boundInterface: boundInterface
+                            boundInterface: boundInterface,
+                            boundIPv4: boundIPv4,
+                            boundIPv6: boundIPv6
                         ),
                         log: { line in
                             Task { @MainActor in AppLogger.shared.append(line) }

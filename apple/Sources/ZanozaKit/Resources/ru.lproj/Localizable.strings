@@ -81,3 +81,9 @@
 "Other" = "Прочее";
 "Outbound traffic may loop through another active VPN app. Disable other VPN apps or restart Zanoza after Wi-Fi/cellular is up." = "Исходящий трафик может зацикливаться через другое VPN-приложение. Отключите другие VPN или перезапустите Zanoza после появления Wi-Fi или сотовой сети.";
 "Outbound DNS queries are pinned to this physical interface, bypassing any other active VPN." = "Исходящие DNS-запросы привязаны к этому физическому интерфейсу и обходят любые другие активные VPN.";
+"Source IPv4" = "IPv4 источник";
+"Source IPv6" = "IPv6 источник";
+"Third-party VPN" = "Сторонний VPN";
+"Active" = "Активен";
+"Not detected" = "Не обнаружен";
+"Another VPN app is active. Zanoza pins its outbound DNS to this interface AND its source IP to bypass it. If the tunnel still stalls, check the other app for a 'Strict / Lockdown / Include All Networks' toggle and disable it." = "Активен другой VPN. Zanoza привязывает исходящий DNS и к интерфейсу, и к его IP-адресу, чтобы обойти его. Если туннель всё равно зависает, найдите в другом приложении переключатель «Строгий режим / Lockdown / Include All Networks» и отключите его.";

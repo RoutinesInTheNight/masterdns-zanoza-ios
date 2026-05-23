@@ -1,8 +1,11 @@
 // Package netbind centralises outbound UDP dialing so every socket can be
-// bound to a specific physical network interface (Darwin IP_BOUND_IF /
-// IPV6_BOUND_IF). On iOS this bypasses any NetworkExtension VPN that another
-// app on the device has installed, preventing the DNS-tunnel routing loop
-// that otherwise collapses the MasterDnsVPN client.
+// bound to a specific physical network interface AND its primary IP
+// address. The combination defeats third-party iOS NetworkExtensions
+// (Happ, Shadowrocket, etc.) that would otherwise capture our DNS-tunnel
+// traffic: setsockopt(IP_BOUND_IF) tells the kernel which interface to
+// emit on; binding to the interface's own source IP forces source-address
+// selection so the foreign NE cannot rewrite the route based on a default
+// route it owns.
 package netbind
 
 import (
@@ -13,6 +16,8 @@ import (
 
 var (
 	iface       atomic.Pointer[string]
+	addrV4      atomic.Pointer[string]
+	addrV6      atomic.Pointer[string]
 	hooksMu     sync.Mutex
 	hooks       = map[uint64]func(){}
 	hookCounter uint64
@@ -38,10 +43,59 @@ func SetInterface(name string) {
 	fireHooks()
 }
 
+// SetAddress records the primary IPv4 and IPv6 addresses of the active
+// physical interface. Either may be empty. Changes fire OnChange hooks so
+// callers drop sockets bound to the previous local IP.
+func SetAddress(ipv4, ipv6 string) {
+	changed := false
+
+	prevV4 := ""
+	if p := addrV4.Load(); p != nil {
+		prevV4 = *p
+	}
+	if prevV4 != ipv4 {
+		v := ipv4
+		addrV4.Store(&v)
+		changed = true
+	}
+
+	prevV6 := ""
+	if p := addrV6.Load(); p != nil {
+		prevV6 = *p
+	}
+	if prevV6 != ipv6 {
+		v := ipv6
+		addrV6.Store(&v)
+		changed = true
+	}
+
+	if changed {
+		fireHooks()
+	}
+}
+
 // Current returns the currently configured BSD interface name, or "" if
 // no binding is configured.
 func Current() string {
 	p := iface.Load()
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// CurrentIPv4 returns the currently configured primary IPv4 address.
+func CurrentIPv4() string {
+	p := addrV4.Load()
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// CurrentIPv6 returns the currently configured primary IPv6 address.
+func CurrentIPv6() string {
+	p := addrV6.Load()
 	if p == nil {
 		return ""
 	}
@@ -53,9 +107,9 @@ func Current() string {
 // shutdown path) can avoid leaking references to stopped instances.
 type HookHandle uint64
 
-// OnChange registers a callback invoked whenever SetInterface receives a
-// different name. Used by the MasterDnsVPN client to drop its UDP socket
-// pool when the underlying physical link switches (e.g. Wi-Fi → cellular).
+// OnChange registers a callback invoked whenever SetInterface or SetAddress
+// receives a different value. Used by the MasterDnsVPN client to drop its
+// UDP socket pool when the underlying physical link switches.
 func OnChange(fn func()) HookHandle {
 	if fn == nil {
 		return 0
@@ -91,13 +145,27 @@ func fireHooks() {
 	}
 }
 
-// DialUDP dials raddr over UDP and, if an interface name is configured,
-// binds the resulting socket to that physical interface via setsockopt.
-// With no interface configured it is exactly equivalent to net.DialUDP.
+// DialUDP dials raddr over UDP. When a physical interface and/or its
+// primary IP are configured, both setsockopt(IP_BOUND_IF) and bind(2) to
+// the local IP are applied. With nothing configured it falls back to
+// net.DialUDP.
 func DialUDP(network string, raddr *net.UDPAddr) (*net.UDPConn, error) {
 	name := Current()
-	if name == "" {
+	v4 := CurrentIPv4()
+	v6 := CurrentIPv6()
+	if name == "" && v4 == "" && v6 == "" {
 		return net.DialUDP(network, nil, raddr)
 	}
-	return dialUDPBound(network, raddr, name)
+	var local net.IP
+	if raddr != nil && raddr.IP != nil && raddr.IP.To4() == nil {
+		// IPv6 destination → use IPv6 source
+		if v6 != "" {
+			local = net.ParseIP(v6)
+		}
+	} else {
+		if v4 != "" {
+			local = net.ParseIP(v4)
+		}
+	}
+	return dialUDPBound(network, raddr, name, local)
 }

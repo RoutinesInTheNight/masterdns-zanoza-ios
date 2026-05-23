@@ -11,33 +11,38 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func dialUDPBound(network string, raddr *net.UDPAddr, ifname string) (*net.UDPConn, error) {
-	iface, err := net.InterfaceByName(ifname)
-	if err != nil {
-		return nil, err
+func dialUDPBound(network string, raddr *net.UDPAddr, ifname string, local net.IP) (*net.UDPConn, error) {
+	var ifaceIndex int
+	if ifname != "" {
+		ni, err := net.InterfaceByName(ifname)
+		if err != nil {
+			return nil, err
+		}
+		ifaceIndex = ni.Index
 	}
-	idx := iface.Index
 
 	d := net.Dialer{
 		Control: func(_ string, _ string, c syscall.RawConn) error {
+			if ifaceIndex == 0 {
+				return nil
+			}
 			var setErr error
 			ctrlErr := c.Control(func(fd uintptr) {
-				if e := unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_BOUND_IF, idx); e != nil {
+				if e := unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_BOUND_IF, ifaceIndex); e != nil {
 					setErr = e
 					return
 				}
-				// IPv6 variant is harmless on a v4 socket but required when
-				// the resolver address happens to be IPv6.
-				if e := unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_BOUND_IF, idx); e != nil {
-					// Some kernels reject this on a v4 socket — non-fatal.
-					_ = e
-				}
+				// IPv6 variant is best-effort on a v4 socket.
+				_ = unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_BOUND_IF, ifaceIndex)
 			})
 			if ctrlErr != nil {
 				return ctrlErr
 			}
 			return setErr
 		},
+	}
+	if local != nil {
+		d.LocalAddr = &net.UDPAddr{IP: local}
 	}
 
 	conn, err := d.DialContext(context.Background(), network, raddr.String())

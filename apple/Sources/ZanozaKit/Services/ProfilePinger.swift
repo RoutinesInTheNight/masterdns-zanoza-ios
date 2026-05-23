@@ -8,8 +8,12 @@ public enum ProfilePingResult: Equatable {
 
 // Measures profile reachability by sending one UDP DNS A-query for the
 // profile's delegated domain to a well-known public resolver (1.1.1.1) and
-// timing the round-trip. Any response (even NXDOMAIN) counts as success —
-// what matters is that the resolver responded within the budget.
+// timing the round-trip. Any response (even NXDOMAIN) counts as success.
+//
+// The NWConnection is configured to avoid any third-party NetworkExtension
+// (interface type .other) — without this, when Happ / Shadowrocket are
+// active, the ping packet gets captured and looped back to Zanoza's own
+// SOCKS5 listener, which can't tunnel a DNS query in time.
 public final class ProfilePinger: @unchecked Sendable {
     public static let defaultTimeout: TimeInterval = 3.0
     public static let defaultResolverHost = "1.1.1.1"
@@ -38,7 +42,18 @@ public final class ProfilePinger: @unchecked Sendable {
     ) async -> ProfilePingResult {
         let port = NWEndpoint.Port(rawValue: resolverPort) ?? .init(integerLiteral: 53)
         let endpoint = NWEndpoint.hostPort(host: .init(resolverHost), port: port)
-        let connection = NWConnection(to: endpoint, using: .udp)
+
+        // NWParameters tweaks: prohibit `.other` (every NEPacketTunnelProvider
+        // shows up as `.other`), forbid the proxied path, and prefer the
+        // active physical interface explicitly if one is present.
+        let parameters = NWParameters.udp
+        parameters.prohibitedInterfaceTypes = [.other]
+        parameters.prohibitExpensivePaths = false
+        if #available(iOS 16.0, *) {
+            parameters.prohibitConstrainedPaths = false
+        }
+
+        let connection = NWConnection(to: endpoint, using: parameters)
         let queue = DispatchQueue(label: "io.zanoza.pinger")
         let query = makeDnsQuery(for: domain)
         let start = DispatchTime.now()

@@ -30,10 +30,30 @@ func SetBoundInterface(name string) {
 	netbind.SetInterface(name)
 }
 
+// SetBoundAddress records the primary IPv4 and IPv6 source addresses of
+// the active physical interface. The Go client uses these as the LocalAddr
+// for outbound dials, in addition to setsockopt(IP_BOUND_IF). Belt-and-
+// braces: IP_BOUND_IF picks the egress interface, and source-IP binding
+// stops the foreign NetworkExtension from rewriting the route based on a
+// default route it owns. Pass empty strings to clear.
+func SetBoundAddress(ipv4, ipv6 string) {
+	netbind.SetAddress(ipv4, ipv6)
+}
+
 // BoundInterface returns the currently configured BSD interface name, or
 // "" if no binding is active.
 func BoundInterface() string {
 	return netbind.Current()
+}
+
+// BoundIPv4 returns the currently bound primary IPv4 address, or "".
+func BoundIPv4() string {
+	return netbind.CurrentIPv4()
+}
+
+// BoundIPv6 returns the currently bound primary IPv6 address, or "".
+func BoundIPv6() string {
+	return netbind.CurrentIPv6()
 }
 
 // LogWriter receives one log line at a time (no trailing newline).
@@ -136,7 +156,18 @@ func Start(configTOML, resolversText, runtimeDir string) error {
 	}()
 
 	if name := netbind.Current(); name != "" {
-		emit("Bound outbound interface: " + name)
+		v4 := netbind.CurrentIPv4()
+		v6 := netbind.CurrentIPv6()
+		switch {
+		case v4 != "" && v6 != "":
+			emit("Bound outbound interface: " + name + " (src " + v4 + " / " + v6 + ")")
+		case v4 != "":
+			emit("Bound outbound interface: " + name + " (src " + v4 + ")")
+		case v6 != "":
+			emit("Bound outbound interface: " + name + " (src " + v6 + ")")
+		default:
+			emit("Bound outbound interface: " + name + " (no source IP yet)")
+		}
 	} else {
 		emit("Bound outbound interface: none (default route)")
 	}
