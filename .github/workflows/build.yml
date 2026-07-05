@@ -1,0 +1,44 @@
+name: Build Zanoza IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: sudo xcode-select -s /Applications/Xcode_16.app
+
+      - name: Install Homebrew deps
+        run: brew install go xcodegen
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Init gomobile
+        run: gomobile init
+
+      - name: Install Pillow (for icon generation)
+        run: python3 -m pip install --user pillow
+
+      - name: Build Go xcframework
+        run: apple/Scripts/build-xcframework.sh
+
+      - name: Generate Xcode project
+        run: apple/Scripts/prepare-xcode.sh
+
+      - name: Build unsigned IPA
+        run: apple/Scripts/build-ios-unsigned-local-ipa.sh
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zanoza-unsigned-ipa
+          path: apple/.build/ios-unsigned-local/Zanoza-unsigned.ipa
