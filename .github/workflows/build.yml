@@ -28,7 +28,7 @@ jobs:
         run: gomobile init
 
       - name: Install Pillow (for icon generation)
-        run: python3 -m pip install --user pillow
+        run: python3 -m pip install --user --break-system-packages pillow
 
       - name: Build Go xcframework
         run: apple/Scripts/build-xcframework.sh
